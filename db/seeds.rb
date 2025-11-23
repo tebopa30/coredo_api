@@ -1,9 +1,19 @@
-# This file should ensure the existence of records required to run the application in every environment (production,
-# development, test). The code here should be idempotent so that it can be executed at any point in every environment.
-# The data can then be loaded with the bin/rails db:seed command (or created alongside the database with db:setup).
-#
-# Example:
-#
-#   ["Action", "Comedy", "Drama", "Horror"].each do |genre_name|
-#     MovieGenre.find_or_create_by!(name: genre_name)
-#   end
+Question.destroy_all
+Option.destroy_all
+Dish.destroy_all
+
+q1 = Question.create!(text: "あっさり or こってり？", order_index: 1, routing: "static")
+q2 = Question.create!(text: "和食？洋食？中華？", order_index: 2, routing: "static")
+
+ramen = Dish.create!(name: "豚骨ラーメン", cuisine: "中華", heaviness: "こってり", description: "濃厚スープ")
+udon  = Dish.create!(name: "ざるうどん", cuisine: "和食", heaviness: "あっさり", description: "さっぱり麺")
+pasta = Dish.create!(name: "ペペロンチーノ", cuisine: "洋食", heaviness: "あっさり", description: "シンプルな味")
+
+# Q1 options
+Option.create!(question: q1, text: "あっさり", next_question_id: q2.id)
+Option.create!(question: q1, text: "こってり", next_question_id: q2.id)
+
+# Q2 options（分岐→料理）
+Option.create!(question: q2, text: "和食", dish_id: udon.id)
+Option.create!(question: q2, text: "洋食", dish_id: pasta.id)
+Option.create!(question: q2, text: "中華", dish_id: ramen.id)
