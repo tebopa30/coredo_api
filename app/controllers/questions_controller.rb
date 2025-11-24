@@ -1,7 +1,12 @@
 class QuestionsController < ApplicationController
   def start
+    session = Session.create!(
+      uuid: SecureRandom.uuid,
+      started_at: Time.current
+    )
+
     q = Question.order(:order_index).first
-    render json: serialize_question(q)
+    render json: serialize_question(q).merge(session_id: session.uuid)
   end
 
   def show
@@ -17,7 +22,12 @@ class QuestionsController < ApplicationController
       text: q.text,
       routing: q.routing,
       options: q.options.map { |o|
-        { id: o.id, text: o.text, next_question_id: o.next_question_id, dish_id: o.dish_id }
+        {
+          id: o.id,
+          text: o.text,
+          next_question_id: o.next_question_id,
+          dish_id: o.dish_id
+        }
       }
     }
   end
