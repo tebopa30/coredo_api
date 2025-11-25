@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2025_11_24_110017) do
+ActiveRecord::Schema[8.1].define(version: 2025_11_25_170618) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -68,6 +68,7 @@ ActiveRecord::Schema[8.1].define(version: 2025_11_24_110017) do
     t.datetime "created_at", null: false
     t.bigint "dish_id"
     t.datetime "finished_at"
+    t.json "messages", default: []
     t.datetime "started_at"
     t.datetime "updated_at", null: false
     t.string "uuid", null: false

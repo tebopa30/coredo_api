@@ -9,7 +9,19 @@ Rails.application.routes.draw do
     get  'dishes/:id/places', to: 'places#nearby'
     get  'dishes/:id/recipes', to: 'recipes#index'
     get  'history/:session_id', to: 'history#index'
+    get 'places/search', to: 'places#search'
+    get 'places/details', to: 'places#details'
+    get 'places/geocode', to: 'places#geocode'
+    get 'places/directions', to: 'places#directions'
   end
+
+  resources :questions, only: [] do
+    collection do
+      post :start
+      post :answer
+      post :ai_answer
+    end
+  end  
 
   # Define your application routes per the DSL in https://guides.rubyonrails.org/routing.html
 

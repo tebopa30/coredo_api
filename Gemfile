@@ -37,6 +37,9 @@ gem "rack-cors"
 gem "jwt"
 gem "bcrypt"
 gem "pundit"
+gem 'dotenv-rails'
+gem 'httparty'
+gem 'ruby-openai'
 
 group :development, :test do
   # See https://guides.rubyonrails.org/debugging_rails_applications.html#debugging-with-the-debug-gem

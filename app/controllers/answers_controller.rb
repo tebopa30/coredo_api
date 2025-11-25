@@ -1,42 +1,29 @@
 class AnswersController < ApplicationController
   def create
     session = Session.find_by!(uuid: params.require(:session_id))
-    option = Option.find(params.require(:option_id))
+    service = OpenaiChatService.new(session)
 
-    Answer.create!(
-      session_id: session.id,
-      question_id: option.question_id,
-      option_id: option.id
+    # ユーザーの選択肢や質問をAIに渡して回答生成
+    question_text = params[:question] || Option.find(params[:option_id]).text
+    result_text = service.reply_to(question_text)
+
+    # 画像もAIで生成（gpt-image-1）
+    client = OpenAI::Client.new
+    image_response = client.images.generate(
+        model: "gpt-image-1",
+        prompt: "#{result_text}の美味しそうな写真、リアルで高品質な料理写真",
+        size: "512x512"
     )
+    image_url = image_response.dig("data", 0, "url")
 
-    if option.next_question_id.present?
-      next_q = Question.find(option.next_question_id)
-      render json: serialize_question(next_q).merge(session_id: session.uuid)
-    elsif option.dish_id.present?
-      dish = Dish.find(option.dish_id)
-      session.update!(dish_id: dish.id, finished_at: Time.current)
-      render json: { result: { dish_id: dish.id, name: dish.name } }
-    else
-      render json: { message: "回答が未設定" }, status: :unprocessable_entity
-    end
-  end
+    # セッションを終了状態に更新
+    session.update!(finished_at: Time.current)
 
-  private
-
-  def serialize_question(q)
-    {
-      id: q.id,
-      text: q.text,
-      routing: q.routing,
-      options: q.options.map { |o|
-        {
-          id: o.id,
-          text: o.text,
-          next_question_id: o.next_question_id,
-          dish_id: o.dish_id
-        }
+    render json: {
+      result: {
+        text: result_text,
+        image_url: image_url
       }
     }
   end
-
 end
