@@ -1,27 +1,50 @@
 class AnswersController < ApplicationController
   def create
-    session = Session.find_by!(uuid: params.require(:session_id))
+    session = Session.find_by!(uuid: params[:session_id])
+    service = OpenaiChatService.new(session)
+  
+    user_answer =
+      case params[:option_id]
+      when "light" then "あっさり"
+      when "rich"  then "こってり"
+      else params[:answer_text]
+      end
+  
+    result_text = service.reply_to(user_answer)
+    next_questions = service.generate_next_questions
+  
+    if next_questions.present?
+      render json: { next_questions: next_questions }
+    else
+      # finish 判定はここではしない。必ず String を返す
+      render json: { result: result_text }
+    end
+  end
+
+  def finish
+    session = Session.find_by!(uuid: params[:session_id])
     service = OpenaiChatService.new(session)
 
-    # ユーザーの選択肢や質問をAIに渡して回答生成
-    question_text = params[:question] || Option.find(params[:option_id]).text
-    result_text = service.reply_to(question_text)
+    dish_name = params[:question] || params[:answer_text]
+    result_text = service.reply_to(dish_name)
 
-    # 画像もAIで生成（gpt-image-1）
     client = OpenAI::Client.new
     image_response = client.images.generate(
+      parameters: {
         model: "gpt-image-1",
         prompt: "#{result_text}の美味しそうな写真、リアルで高品質な料理写真",
         size: "512x512"
+      }
     )
     image_url = image_response.dig("data", 0, "url")
 
-    # セッションを終了状態に更新
     session.update!(finished_at: Time.current)
 
+    # Flutter 側は Map 前提で受け取る
     render json: {
       result: {
-        text: result_text,
+        name: result_text,
+        recipe: "レシピは後ほど追加予定です",
         image_url: image_url
       }
     }
