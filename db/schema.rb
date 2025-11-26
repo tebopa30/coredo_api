@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2025_11_25_170618) do
+ActiveRecord::Schema[8.1].define(version: 2025_11_26_165648) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -70,6 +70,7 @@ ActiveRecord::Schema[8.1].define(version: 2025_11_25_170618) do
     t.datetime "finished_at"
     t.json "messages", default: []
     t.datetime "started_at"
+    t.jsonb "state", default: {}, null: false
     t.datetime "updated_at", null: false
     t.string "uuid", null: false
     t.index ["dish_id"], name: "index_sessions_on_dish_id"

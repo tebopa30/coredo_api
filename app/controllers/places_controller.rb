@@ -45,15 +45,23 @@ class PlacesController < ApplicationController
         key: ENV['GOOGLE_API_KEY']
       }
     })
-    result = response.parsed_response["result"]
-    render json: {
-      name: result["name"],
-      address: result["formatted_address"],
-      phone: result["formatted_phone_number"],
-      rating: result["rating"],
-      photos: result["photos"],
-      reviews: result["reviews"]
-    }
+  
+    parsed = response.parsed_response
+    status = parsed["status"]
+    result = parsed["result"]
+  
+    if status == "OK" && result.present?
+      render json: {
+        name: result["name"],
+        address: result["formatted_address"],
+        phone: result["formatted_phone_number"],
+        rating: result["rating"],
+        photos: result["photos"],
+        reviews: result["reviews"]
+      }
+    else
+      render json: { error: "Google Places API error", status: status, raw: parsed }, status: :bad_request
+    end
   end
   
 end
