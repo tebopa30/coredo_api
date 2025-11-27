@@ -45,23 +45,32 @@ class PlacesController < ApplicationController
         key: ENV['GOOGLE_API_KEY']
       }
     })
-  
+
     parsed = response.parsed_response
     status = parsed["status"]
     result = parsed["result"]
-  
+
     if status == "OK" && result.present?
+      # 写真のURLを生成
+      photos = (result["photos"] || []).map do |p|
+        if p["photo_reference"].present?
+          "https://maps.googleapis.com/maps/api/place/photo" \
+          "?maxwidth=400" \
+          "&photo_reference=#{p['photo_reference']}" \
+          "&key=#{ENV['GOOGLE_API_KEY']}"
+        end
+      end.compact
+
       render json: {
         name: result["name"],
         address: result["formatted_address"],
         phone: result["formatted_phone_number"],
         rating: result["rating"],
-        photos: result["photos"],
+        photos: photos,
         reviews: result["reviews"]
       }
     else
       render json: { error: "Google Places API error", status: status, raw: parsed }, status: :bad_request
     end
   end
-  
 end
