@@ -33,12 +33,10 @@ class OpenaiChatService
       ai_payload = call_ai(messages_for_finish(messages))
       parsed     = safe_parse_json(ai_payload)
     
-      result = parsed["result"] if parsed.is_a?(Hash) && parsed["result"].is_a?(Hash)
-      result ||= {
-        "dish" => "おすすめの一品",
-        "subtype" => "ジャンル未指定",
-        "description" => "もうちょっとで決まりそう！"
-      }
+      result = parsed&.dig("result").is_a?(Hash) ? parsed["result"] : {}
+      result["dish"] ||= "おすすめの一品"
+      result["subtype"] ||= "ジャンル未指定"
+      result["description"] ||= "なるほど！ じゃあ次は～"
     
       result_with_image = add_image_to_result(result)
       persist!(messages, result_with_image.to_json)
@@ -52,7 +50,7 @@ class OpenaiChatService
     if parsed.is_a?(Hash) && parsed["result"].is_a?(Hash)
       if @state["turn_count"] < 3
         next_q = {
-          "question" => "もうちょっとで決まりそう！",
+          "question" => "なるほど！ じゃあ次は～",
           "options" => ["さっぱり", "こってり", "軽め"]
         }
         persist!(messages, [next_q].to_json)
@@ -69,7 +67,7 @@ class OpenaiChatService
       return { "next_questions" => [next_q] }
     else
       fallback_q = {
-        "question" => "もう少しおしえて！",
+        "question" => "なるほど～ じゃあ次は～",
         "options" => ["さっぱりした感じ", "こってりした感じ", "軽めに食べたい"]
       }
       persist!(messages, [fallback_q].to_json)
@@ -79,11 +77,12 @@ class OpenaiChatService
 
   def generate_next_questions
     prompt = <<~TEXT
-      あなたは20代の清楚な日本人女性として、ユーザーと親しい友人のような雰囲気で会話を進めるAIです。
+      あなたは20代の清楚な日本人女性として、ユーザーと親しい友人のような雰囲気でフランクな会話を進めるAIです。
       会話はすべて柔らかい日本語で行ってください。語尾は優しく、親しみやすい口調を心がけてください。
 
       ユーザーが今食べたい料理を一緒に探すための最初の質問を考えてください。
-      質問はひとことで表現し、各質問に対して3つ以上の選択肢を3つ以上示してください。空配列は禁止です。
+      質問はひとことで表現し、各質問に対して3つ以上の選択肢を3回以上示してください。空配列は禁止です。
+      同じ質問を繰り返さないこと。
       選択肢には料理名を一切含めないこと。
 
       ★追記: 最終提案では必ずジャンル内のサブタイプ（例: ラーメンなら豚骨・醤油・味噌など）まで絞り込んでください。
@@ -108,13 +107,13 @@ class OpenaiChatService
     raw = response.dig("choices", 0, "message", "content")
     Rails.logger.info("[AI RAW RESPONSE] #{raw}")
 
-    JSON.parse(raw) rescue [{ "question" => "好みを教えて", "options" => [] }]
+    JSON.parse(raw) rescue [{ "question" => "あなたの好きなものを教えて", "options" => [] }]
   end
 
   def suppress_duplicate_question(q)
     q_str = q["question"].to_s.strip
     if q_str == @state["last_question"]
-      alt = { "question" => "もう少し教えてほしいな", "options" => ["さっぱり", "こってり", "軽め"] }
+      alt = { "question" => "もう少し教えてほしいな～", "options" => ["さっぱり", "こってり", "軽め"] }
       @state["last_question"] = alt["question"]
       alt
     else
@@ -158,17 +157,18 @@ class OpenaiChatService
   
   def messages_for_next(messages)
     system_prompt = <<~PROMPT
-      あなたは20代の清楚な日本人女性として、ユーザーと親しい友人のような雰囲気で会話を進めるAIです。
+      あなたは20代の清楚な日本人女性として、ユーザーと親しい友人のような雰囲気でフランクな会話を進めるAIです。
       会話はすべて柔らかい日本語で行ってください。語尾は優しく、親しみやすい口調を心がけてください。
 
       ユーザーが今食べたい料理を一緒に探すことが目的です。
       ユーザーの「今の気分」や「食の傾向」を短い一問で尋ね、選択肢を3つ以上示してください。空配列は禁止です。
+      同じ質問を繰り返さないこと。
       十分に情報が集まったら、料理名を含めた最終提案を行ってください。
 
       ★最終提案では必ずジャンル内のサブタイプまで絞り込んでください。
 
       出力は以下のいずれかのみ。自由文は禁止。
-      # { "result": { "dish": "料理名", "subtype": "サブタイプ", "description": "料理の説明" } }
+      # { "result": { "dish": "料理名", "subtype": "サブタイプ", "description": "料理の簡単な紹介" } }
       # [ { "question": "質問文", "options": ["選択肢1", "選択肢2", "選択肢3"] } ]
 
       会話履歴: #{@session.messages.to_json}
@@ -179,16 +179,15 @@ class OpenaiChatService
 
   def messages_for_finish(messages)
     system_prompt = <<~PROMPT
-      あなたは20代の清楚な日本人女性として、ユーザーと親しい友人のような雰囲気で会話を進めるAIです。
+      あなたは20代の清楚な日本人女性として、ユーザーと親しい友人のような雰囲気でフランクな会話を進めるAIです。
       会話はすべて柔らかい日本語で行ってください。語尾は優しく、親しみやすい口調を心がけてください。
 
       十分に情報が集まりました。これ以上の質問は行わず、必ず最終提案のみを返してください。
       ★重要: 出力する料理は必ず具体的なジャンルとサブタイプを含めてください。
-      例: ラーメンなら「豚骨ラーメン」「醤油ラーメン」。
-     「おすすめの一品」「ジャンル未指定」といった曖昧な表現は禁止です。
+      例: ラーメンなら「豚骨ラーメン」「醤油ラーメン」、サブタイプとはラーメンでいうと「豚骨」や「醤油」のこと。
 
       出力は以下のみ。自由文は禁止。
-      # { "result": { "dish": "料理名", "subtype": "サブタイプ", "description": "料理の説明" } }
+      # { "result": { "dish": "料理名", "subtype": "サブタイプ", "description": "料理の簡単な紹介" } }
 
       会話履歴: #{@session.messages.to_json}
     PROMPT
