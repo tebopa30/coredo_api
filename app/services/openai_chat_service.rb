@@ -7,10 +7,11 @@ class OpenaiChatService
       "finished"      => false,
       "last_question" => nil
     }
+    @messages = Array(@session.messages) # メモリ上で保持
   end
 
   def reply_to(question)
-    last_ai_message = @session.messages.last
+    last_ai_message = @messages.last
     last_question = nil
 
     if last_ai_message && last_ai_message["role"] == "assistant"
@@ -23,28 +24,34 @@ class OpenaiChatService
     selected_option = question.to_s
     user_message = last_question ? "「#{last_question}」に対して「#{selected_option}」を選んだよ" : selected_option
 
-    messages = Array(@session.messages) + [{ role: "user", content: user_message }]
+    @messages << { role: "user", content: user_message }
     @state["turn_count"] += 1
 
-    # 修正後の終了条件
+    # 終了条件
     must_finish = (@state["turn_count"] >= 3)
-    
+
     if must_finish
-      ai_payload = call_ai(messages_for_finish(messages))
+      ai_payload = call_ai(messages_for_finish(@messages))
       parsed     = safe_parse_json(ai_payload)
-    
+
       result = parsed&.dig("result").is_a?(Hash) ? parsed["result"] : {}
       result["dish"] ||= "おすすめの一品"
       result["subtype"] ||= "ジャンル未指定"
       result["description"] ||= "なるほど！ じゃあ次は～"
-    
+
       result_with_image = add_image_to_result(result)
-      persist!(messages, result_with_image.to_json)
+
+      # メモリに保持
+      @messages << { role: "assistant", content: result_with_image.to_json }
       @state["finished"] = true
+
+      # 最後にまとめて保存
+      finalize_session!
+
       return { "result" => result_with_image }
     end
 
-    ai_payload = call_ai(messages_for_next(messages))
+    ai_payload = call_ai(messages_for_next(@messages))
     parsed     = safe_parse_json(ai_payload)
 
     if parsed.is_a?(Hash) && parsed["result"].is_a?(Hash)
@@ -53,24 +60,25 @@ class OpenaiChatService
           "question" => "なるほど！ じゃあ次は～",
           "options" => ["さっぱり", "こってり", "軽め"]
         }
-        persist!(messages, [next_q].to_json)
+        @messages << { role: "assistant", content: [next_q].to_json }
         return { "next_questions" => [next_q] }
       else
         result_with_image = add_image_to_result(parsed["result"])
-        persist!(messages, result_with_image.to_json)
+        @messages << { role: "assistant", content: result_with_image.to_json }
         @state["finished"] = true
+        finalize_session!
         return { "result" => result_with_image }
       end
     elsif parsed.is_a?(Array) && valid_question_array?(parsed)
       next_q = suppress_duplicate_question(parsed.first)
-      persist!(messages, [next_q].to_json)
+      @messages << { role: "assistant", content: [next_q].to_json }
       return { "next_questions" => [next_q] }
     else
       fallback_q = {
         "question" => "なるほど～ じゃあ次は～",
         "options" => ["さっぱりした感じ", "こってりした感じ", "軽めに食べたい"]
       }
-      persist!(messages, [fallback_q].to_json)
+      @messages << { role: "assistant", content: [fallback_q].to_json }
       return { "next_questions" => [fallback_q] }
     end
   end
@@ -98,8 +106,115 @@ class OpenaiChatService
 
     response = @client.chat(
       parameters: {
-        model: "gpt-3.5-turbo-16k",
-        temperature: 0.3,
+        model: "gpt-4o-mini",
+        temperature: 0.5,
+        messages: [{ role: "user", content: prompt }]
+      }
+    )
+
+    raw = response.dig("choices", 0, "message", "content")
+    Rails.logger.info("[AI RAW RESPONSE] #{raw}")
+
+    JSON.parse(raw) rescue [{ "question" => "あなたの好きなものを教えて", "options" => ["さっぱり", "こってり", "軽め"] }]
+  end
+
+  def suppress_duplicate_question(q)
+    q_str = q["question"].to_s.strip
+    if q_str == @state["last_question"]
+      alt = { "question" => "もう少し教えてほしいな～", "options" => ["さっぱり", "こってり", "軽め"] }
+      @state["last_question"] = alt["question"]
+      alt
+    else
+      @state["last_question"] = q_str
+      q
+    end
+  end
+
+  private
+
+  def valid_question_array?(arr)
+    arr.is_a?(Array) &&
+      arr.first.is_a?(Hash) &&
+      arr.first.key?("question") &&
+      arr.first.key?("options") &&
+      arr.first["question"].is_a?(String) &&
+      arr.first["options"].is_a?(Array) &&
+      arr.first["options"].any?
+  end
+
+  def safe_parse_json(text)
+    JSON.parse(text)
+  rescue JSON::ParserError
+    nil
+  end
+
+  # --- 最後にまとめて保存するメソッド ---
+  def finalize_session!
+    @session.update!(
+      messages: @messages,
+      state: @state,
+      finished_at: Time.current
+    )
+  end
+
+  def call_ai(messages)
+    response = @client.chat(
+      parameters: {
+        model: "gpt-4o-mini",
+        temperature: 0.5,
+        messages: messages
+      }
+    )
+    response.dig("choices", 0, "message", "content").to_s
+  end
+
+  def messages_for_next(messages)
+    system_prompt = <<~PROMPT
+      あなたは20代の清楚な日本人女性として、ユーザーと親しい友人のような雰囲気でフランクな会話を進めるAIです。
+      会話はすべて柔らかい日本語で行ってください。語尾は優しく、親しみやすい口調を心がけてください。
+
+      ユーザーが今食べたい料理を一緒に探すことが目的です。
+      ユーザーの「今の気分」や「食の傾向」を短い一問で尋ね、選択肢を3つ以上示してください。空配列は禁止です。
+      同じ質問を繰り返さないこと。
+      十分に情報が集まったら、料理名を含めた最終提案を行ってください。
+
+      ★最終提案では必ずジャンル内のサブタイプまで絞り込んでください。
+
+      出力は以下のいずれかのみ。自由文は禁止。
+      # { "result": { "dish": "料理名", "subtype": "サブタイプ", "description": "料理の簡単な紹介" } }
+      # [ { "question": "質問文", "options": ["選択肢1", "選択肢2", "選択肢3"] } ]
+
+      会話履歴: #{@messages.to_json}
+    PROMPT
+
+    [{ role: "system", content: system_prompt }] + messages
+  end
+
+  def messages_for_finish(messages)
+    system_prompt = <<~PROMPT
+      あなたは20代の清楚な日本人女性として、ユーザーと親しい友人のような雰囲気でフランクな会話を進めるAIです。
+      会話はすべて柔らかい日本語で行ってください。語尾は優しく、親しみやすい口調を心がけてください。
+
+      ユーザーが今食べたい料理を一緒に探すための最初の質問を考えてください。
+      質問はひとことで表現し、各質問に対して3つ以上の選択肢を3回以上示してください。空配列は禁止です。
+      同じ質問を繰り返さないこと。
+      選択肢には料理名を一切含めないこと。
+
+      ★追記: 最終提案では必ずジャンル内のサブタイプ（例: ラーメンなら豚骨・醤油・味噌など）まで絞り込んでください。
+
+      出力は必ず以下の形式のみで返してください。
+      [
+        {
+          "question": "質問文",
+          "options": ["選択肢1", "選択肢2", "選択肢3"]
+        }
+      ]
+    TEXT
+
+    response = @client.chat(
+      parameters: {
+        model: "gpt-4o-mini",
+        temperature: 0.5,
         messages: [{ role: "user", content: prompt }]
       }
     )
@@ -147,8 +262,8 @@ class OpenaiChatService
   def call_ai(messages)
     response = @client.chat(
       parameters: {
-        model: "gpt-3.5-turbo-16k",
-        temperature: 0.3,
+        model: "gpt-4o",
+        temperature: 0.5,
         messages: messages
       }
     )
@@ -211,6 +326,7 @@ class OpenaiChatService
 
     response = @client.images.generate(
       parameters: {
+        model: "gpt-image-1",
         prompt: prompt,
         size: "512x512",
         response_format: "url"
