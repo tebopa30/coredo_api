@@ -11,7 +11,7 @@ class AnswersController < ApplicationController
   def finish
     service = OpenaiChatService.new(@session)
     # 強制的に最終提案のみ返させたいケースのため、空文字でも可
-    payload = service.reply_to(params[:answer].to_s)
+    payload = service.reply_to(params[:answer].to_s, force_finish:true)
     render json: payload
   end
 

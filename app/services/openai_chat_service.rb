@@ -10,76 +10,92 @@ class OpenaiChatService
     @messages = Array(@session.messages)
   end
 
-  def reply_to(question)
+  def reply_to(question, force_finish: false)
+    # 1) 終了済みセッションなら即座に結果かエラーで返す（AIコールをしない）
+    if @state["finished"]
+      last_assistant = @messages.reverse.find do |m|
+        k_role = m.is_a?(Hash) ? (m[:role] || m["role"]) : nil
+        k_role == "assistant"
+      end
+  
+      if last_assistant
+        parsed = safe_parse_json(last_assistant.is_a?(Hash) ? (last_assistant[:content] || last_assistant["content"]) : nil)
+        if parsed.is_a?(Hash) && parsed["result"].is_a?(Hash)
+          return { "result" => add_image_to_result(parsed["result"]) }
+        elsif parsed.is_a?(Hash) && parsed["dish"] # 古い形式に対応
+          return { "result" => add_image_to_result(parsed) }
+        end
+      end
+      return { "error" => "このセッションはすでに終了しています" }
+    end
+  
+    # 2) キーの型差異に強くする（String/Symbol混在対策）
     last_ai_message = @messages.last
-    last_question = nil
-
-    if last_ai_message && last_ai_message["role"] == "assistant"
-      parsed_last = safe_parse_json(last_ai_message["content"]) rescue nil
-      if parsed_last.is_a?(Array) && parsed_last.first.is_a?(Hash)
-        last_question = parsed_last.first["question"]
+    last_question   = nil
+  
+    if last_ai_message
+      role = last_ai_message.is_a?(Hash) ? (last_ai_message[:role] || last_ai_message["role"]) : nil
+      if role == "assistant"
+        content = last_ai_message[:content] || last_ai_message["content"]
+        parsed_last = safe_parse_json(content) rescue nil
+        if parsed_last.is_a?(Array) && parsed_last.first.is_a?(Hash)
+          last_question = parsed_last.first["question"]
+        end
       end
     end
-
+  
     selected_option = question.to_s
-    user_message = last_question ? "「#{last_question}」に対して「#{selected_option}」を選んだよ" : selected_option
-
+    user_message    = last_question ? "「#{last_question}」に対して「#{selected_option}」を選んだよ" : selected_option
+  
     @messages << { role: "user", content: user_message }
     @state["turn_count"] += 1
-
-    # --- 終了条件判定 ---
-    must_finish = (@state["turn_count"] >= 3)
-
+  
+    # 3) 終了条件（force_finish 最優先）
+    must_finish = !!force_finish || (@state["turn_count"] >= 5)
+  
     if must_finish
-      # ★修正点: ここで渡すのはメッセージ配列を作るメソッドの結果
       ai_payload = call_ai(messages_for_finish(@messages))
       parsed     = safe_parse_json(ai_payload)
-      
-      # 構造が { "result": { ... } } か確認
-      result = parsed&.dig("result")
-
+      result     = parsed&.dig("result")
+  
       unless result.is_a?(Hash)
         Rails.logger.warn("[AI RESULT MISSING] #{ai_payload}")
-        # AIがJSONを返さなかった場合の緊急回避（もう一度試すか、エラーを返す）
+        # 絶対に継続へ戻さない：ここで終了フラグを立てて打ち切る
+        @state["finished"] = true
+        finalize_session!
         return { "error" => "AIが最終提案を返しませんでした" }
-      end     
-
+      end
+  
       result_with_image = add_image_to_result(result)
-
       @messages << { role: "assistant", content: result_with_image.to_json }
       @state["finished"] = true
-
       finalize_session!
-
       return { "result" => result_with_image }
     end
-
-    # --- 継続の場合 ---
+  
+    # 4) 継続時：AIが結論を返したら即終了（ループ防止）
     ai_payload = call_ai(messages_for_next(@messages))
     parsed     = safe_parse_json(ai_payload)
-
-    # もし途中でAIが勝手に結論(result)を出してしまった場合の処理
-    # (まだターン数が少ないなら無視して質問させるロジックにするか、受け入れるかは仕様次第ですが、ここでは受け入れる形に修正するか、元のロジックを維持します)
+  
     if parsed.is_a?(Hash) && parsed["result"].is_a?(Hash)
-      # ターン数未満でもAIが結論を出したなら、終了とする（ループ防止のため）
       result_with_image = add_image_to_result(parsed["result"])
       @messages << { role: "assistant", content: result_with_image.to_json }
       @state["finished"] = true
       finalize_session!
       return { "result" => result_with_image }
-
     elsif parsed.is_a?(Array) && valid_question_array?(parsed)
       next_q = suppress_duplicate_question(parsed.first)
       @messages << { role: "assistant", content: [next_q].to_json }
+      finalize_session!
       return { "next_questions" => [next_q] }
-
     else
-      # パース失敗時のフォールバック
+      # 継続モードのフォールバック（finishモードではここに来ない）
       fallback_q = {
         "question" => "なるほど！ じゃあ次は～",
-        "options" => ["さっぱりした感じ", "こってりした感じ", "軽めに食べたい"]
+        "options"  => ["さっぱりした感じ", "こってりした感じ", "軽めに食べたい"]
       }
       @messages << { role: "assistant", content: [fallback_q].to_json }
+      finalize_session!
       return { "next_questions" => [fallback_q] }
     end
   end
@@ -214,14 +230,32 @@ class OpenaiChatService
     result_hash.merge("image_url" => image_url)
   end
 
-  def generate_image_url(dish:, subtype:, description:)
-    # 実際の画像生成ロジック (省略時はplaceholder)
-    prompt = "A delicious food photo of #{dish} (#{subtype}). High quality, appetizing."
-    # API呼び出しの実装...
-    placeholder_image_url
+  def generate_image_url(dish:, subtype: nil, description: nil)
+    # subtype が空なら含めない
+    if subtype.nil? || subtype.strip.empty?
+      prompt = "A delicious food photo of #{dish}. High quality, appetizing."
+    else
+      prompt = "A delicious food photo of #{dish} (#{subtype}). High quality, appetizing."
+    end
+  
+    begin
+      response = @client.images.generate(
+        parameters: {
+          model: "gpt-image-1",
+          prompt: prompt,
+          size: "512x512"
+        }
+      )
+  
+      response.dig("data", 0, "url") || placeholder_image_url
+    rescue => e
+      Rails.logger.error("[IMAGE GENERATION ERROR] #{e.message}")
+      placeholder_image_url
+    end
+  end
+  
+  def placeholder_image_url
+    "http://10.0.2.2:3000/default.png"
   end
 
-  def placeholder_image_url
-    '/default.png'
-  end
 end
