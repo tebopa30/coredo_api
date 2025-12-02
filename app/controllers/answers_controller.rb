@@ -9,10 +9,24 @@ class AnswersController < ApplicationController
   end
 
   def finish
-    service = OpenaiChatService.new(@session)
-    # 強制的に最終提案のみ返させたいケースのため、空文字でも可
-    payload = service.reply_to(params[:answer].to_s, force_finish:true)
-    render json: payload
+    dish = params[:question].to_s
+  
+    # 抽象ワードはスキップ
+    if dish.match?(/感じ|気分|もの/)
+      Rails.logger.info("[FINISH SKIP] dish=#{dish.inspect}")
+      render json: { status: "skipped", session_id: params[:session_id] }
+      return
+    end
+  
+    result_hash = {
+      "session_id" => params[:session_id],
+      "dish"       => dish,
+      "subtype"    => params[:subtype],
+      "description"=> params[:description]
+    }
+  
+    ImageGenerationService.add_image_to_result(result_hash)
+    render json: { status: "accepted", session_id: result_hash["session_id"] }
   end
 
   private

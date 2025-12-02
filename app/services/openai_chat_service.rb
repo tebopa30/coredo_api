@@ -66,7 +66,8 @@ class OpenaiChatService
         return { "error" => "AIが最終提案を返しませんでした" }
       end
   
-      result_with_image = add_image_to_result(result)
+      result_with_image = ImageGenerationService.add_image_to_result(parsed["result"])
+
       @messages << { role: "assistant", content: result_with_image.to_json }
       @state["finished"] = true
       finalize_session!
@@ -78,7 +79,8 @@ class OpenaiChatService
     parsed     = safe_parse_json(ai_payload)
   
     if parsed.is_a?(Hash) && parsed["result"].is_a?(Hash)
-      result_with_image = add_image_to_result(parsed["result"])
+      result_with_image = ImageGenerationService.add_image_to_result(parsed["result"])
+
       @messages << { role: "assistant", content: result_with_image.to_json }
       @state["finished"] = true
       finalize_session!
@@ -160,7 +162,8 @@ class OpenaiChatService
 
   def messages_for_next(messages)
     system_prompt = <<~PROMPT
-      あなたは20代の清楚な日本人女性として振る舞ってください。
+      あなたは20代の清楚な日本人女性として、ユーザーと親しい友人のような雰囲気でフランクな会話を進めるAIです。
+      会話はすべて柔らかい日本語で行ってください。タメ口で、語尾は優しく、親しみやすい口調を心がけてください。
       ユーザーが今食べたい料理を探しています。
       
       現在はヒアリングの段階です。
@@ -220,42 +223,6 @@ class OpenaiChatService
       @state["last_question"] = q_str
       q
     end
-  end
-
-  def add_image_to_result(result_hash)
-    dish = result_hash["dish"].to_s
-    subtype = result_hash["subtype"].to_s
-    desc = result_hash["description"].to_s
-    image_url = generate_image_url(dish: dish, subtype: subtype, description: desc)
-    result_hash.merge("image_url" => image_url)
-  end
-
-  def generate_image_url(dish:, subtype: nil, description: nil)
-    # subtype が空なら含めない
-    if subtype.nil? || subtype.strip.empty?
-      prompt = "A delicious food photo of #{dish}. High quality, appetizing."
-    else
-      prompt = "A delicious food photo of #{dish} (#{subtype}). High quality, appetizing."
-    end
-  
-    begin
-      response = @client.images.generate(
-        parameters: {
-          model: "gpt-image-1",
-          prompt: prompt,
-          size: "512x512"
-        }
-      )
-  
-      response.dig("data", 0, "url") || placeholder_image_url
-    rescue => e
-      Rails.logger.error("[IMAGE GENERATION ERROR] #{e.message}")
-      placeholder_image_url
-    end
-  end
-  
-  def placeholder_image_url
-    "http://10.0.2.2:3000/default.png"
   end
 
 end
