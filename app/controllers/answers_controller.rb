@@ -25,7 +25,6 @@ class AnswersController < ApplicationController
       "description"=> params[:description]
     }
   
-    ImageGenerationService.add_image_to_result(result_hash)
     render json: { status: "accepted", session_id: result_hash["session_id"] }
   end
 

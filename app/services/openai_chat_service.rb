@@ -21,9 +21,9 @@ class OpenaiChatService
       if last_assistant
         parsed = safe_parse_json(last_assistant.is_a?(Hash) ? (last_assistant[:content] || last_assistant["content"]) : nil)
         if parsed.is_a?(Hash) && parsed["result"].is_a?(Hash)
-          return { "result" => add_image_to_result(parsed["result"]) }
+          return { "result" => add_result(parsed["result"]) }
         elsif parsed.is_a?(Hash) && parsed["dish"] # 古い形式に対応
-          return { "result" => add_image_to_result(parsed) }
+          return { "result" => add_result(parsed) }
         end
       end
       return { "error" => "このセッションはすでに終了しています" }
@@ -65,13 +65,11 @@ class OpenaiChatService
         finalize_session!
         return { "error" => "AIが最終提案を返しませんでした" }
       end
-  
-      result_with_image = ImageGenerationService.add_image_to_result(parsed["result"])
 
-      @messages << { role: "assistant", content: result_with_image.to_json }
+      @messages << { role: "assistant", content: result.to_json }
       @state["finished"] = true
       finalize_session!
-      return { "result" => result_with_image }
+      return { "result" => result }
     end
   
     # 4) 継続時：AIが結論を返したら即終了（ループ防止）
@@ -79,12 +77,12 @@ class OpenaiChatService
     parsed     = safe_parse_json(ai_payload)
   
     if parsed.is_a?(Hash) && parsed["result"].is_a?(Hash)
-      result_with_image = ImageGenerationService.add_image_to_result(parsed["result"])
+      result = add_result(parsed["result"])
 
-      @messages << { role: "assistant", content: result_with_image.to_json }
+      @messages << { role: "assistant", content: result.to_json }
       @state["finished"] = true
       finalize_session!
-      return { "result" => result_with_image }
+      return { "result" => result }
     elsif parsed.is_a?(Array) && valid_question_array?(parsed)
       next_q = suppress_duplicate_question(parsed.first)
       @messages << { role: "assistant", content: [next_q].to_json }
