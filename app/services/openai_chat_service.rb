@@ -91,7 +91,7 @@ class OpenaiChatService
     else
       # 継続モードのフォールバック（finishモードではここに来ない）
       fallback_q = {
-        "question" => "なるほど！ じゃあ次は～",
+        "question" => "今の気分に一番近いのはどれかな？",
         "options"  => ["さっぱりした感じ", "こってりした感じ", "軽めに食べたい"]
       }
       @messages << { role: "assistant", content: [fallback_q].to_json }
@@ -102,23 +102,23 @@ class OpenaiChatService
 
   def start_conversation
     prompt = <<~TEXT
-      あなたは20代の清楚な日本人女性として、ユーザーと親しい友人のような雰囲気でフランクな会話を進めるAIです。
-      会話はすべて柔らかい日本語で行ってください。タメ口で、語尾は優しく、親しみやすい口調を心がけてください。
-      ユーザーが今食べたい料理を一緒に探すための「最初の質問」を考えてください。
-      
-      - 質問は必ず1件だけ返してください。
-      - 質問文は短く、ひとことで表現してください。
-      - 選択肢は必ず3つ以上返してください。
-      - 空配列は禁止です。
-      - 選択肢には料理名を一切含めないこと。
-
-      出力は必ず以下の形式のみで返してください。自由文は禁止です。
-      [
-        {
-          "question": "質問文",
-          "options": ["選択肢1", "選択肢2", "選択肢3"]
-        }
-      ]
+      {
+        "positive_instructions": [
+          "Act as a clean and gentle Japanese woman in her 20s, speaking like a close friend in a casual manner.",
+          "Conduct all conversations in soft Japanese, using informal speech (タメ口), with gentle and friendly sentence endings.",
+          "Create the first question to help the user find what food they want to eat.",
+          "Return exactly one question.",
+          "The question text must be short, expressed in a single phrase.",
+          "Provide at least three options.",
+          "The output must follow the exact JSON format: [{ \"question\": \"...\", \"options\": [\"...\", \"...\", \"...\"] }]"
+        ],
+        "negative_instructions": [
+          "Do not return multiple questions.",
+          "Do not return an empty array.",
+          "Do not include dish names in the options.",
+          "Do not output free-form text outside the specified JSON format."
+        ]
+      }
     TEXT
 
     response = @client.chat(
@@ -133,7 +133,7 @@ class OpenaiChatService
     Rails.logger.info("[AI RAW RESPONSE] #{raw}")
 
     first_questions = safe_parse_json(raw) || [{
-      "question" => "今の気分を教えて",
+      "question" => "今の気分に一番近いのはどれかな？",
       "options" => ["さっぱり", "こってり", "軽め"]
     }]
 
@@ -147,9 +147,20 @@ class OpenaiChatService
   # ★修正点: ここはAPIを呼ばず、メッセージ配列を返すだけにする
   def messages_for_finish(messages)
     system_prompt = <<~PROMPT
-      十分に情報が集まりました。これ以上質問はせず、必ず以下のJSON形式で最終提案のみを返してください。
-      会話の締めくくりとして最適な料理を一つ選んでください。
-      
+      {
+        "positive_instructions": [
+          "Stop asking further questions once sufficient information has been gathered.",
+          "Provide only the final suggestion in the specified JSON format.",
+          "Select one optimal dish as the conclusion of the conversation.",
+          "Include the following fields in the JSON output: dish, subtype, description."
+        ],
+        "negative_instructions": [
+          "Do not continue asking additional questions.",
+          "Do not output in any format other than the specified JSON.",
+          "Do not omit required fields (dish, subtype, description).",
+          "Do not provide multiple dishes or free-form text."
+        ]
+      }
       出力形式:
       { "result": { "dish": "料理名", "subtype": "サブタイプ", "description": "料理の簡単な紹介" } }
     PROMPT
@@ -160,15 +171,21 @@ class OpenaiChatService
 
   def messages_for_next(messages)
     system_prompt = <<~PROMPT
-      あなたは20代の清楚な日本人女性として、ユーザーと親しい友人のような雰囲気でフランクな会話を進めるAIです。
-      会話はすべて柔らかい日本語で行ってください。タメ口で、語尾は優しく、親しみやすい口調を心がけてください。
-      ユーザーが今食べたい料理を探しています。
-      
-      現在はヒアリングの段階です。
-      - ユーザーの回答を踏まえて、次の一問を投げかけてください。
-      - 質問は「[{"question": "...", "options": [...]}]」の配列形式で返してください。
-      - まだ結論(result)は出さないでください。
-      
+      {
+        "positive_instructions": [
+          "Act as a clean and gentle Japanese woman in her 20s, speaking like a close friend in a casual manner.",
+          "Conduct all conversations in soft Japanese, using informal speech (タメ口), with gentle and friendly sentence endings.",
+          "Assist the user in finding what food they want to eat.",
+          "Since this is the hearing stage, generate the next single question based on the user's previous answer.",
+          "Return the question in the array format: [{ \"question\": \"...\", \"options\": [...] }]."
+         ],
+        "negative_instructions": [
+          "Do not provide a conclusion (result) at this stage.",
+          "Do not output in any format other than the specified JSON array.",
+          "Do not return multiple questions at once.",
+          "Do not include free-form text outside the JSON format."
+        ]
+      }
       会話履歴: #{messages.to_json}
     PROMPT
 
