@@ -40,3 +40,18 @@ plugin :solid_queue if ENV["SOLID_QUEUE_IN_PUMA"]
 # Specify the PID file. Defaults to tmp/pids/server.pid in development.
 # In other environments, only set the PID file if requested.
 pidfile ENV["PIDFILE"] if ENV["PIDFILE"]
+
+rails_root = Dir.pwd
+
+bind "unix://#{rails_root}/tmp/sockets/puma.sock"
+
+if ENV["RAILS_ENV"] == "production"
+  pidfile File.join(rails_root, 'tmp', 'pids', 'puma.pid')
+  state_path File.join(rails_root, 'tmp', 'pids', 'puma.state')
+  stdout_redirect(
+    File.join(rails_root, 'log', 'puma.log'),
+    File.join(rails_root, 'log', 'puma-error.log'),
+    true
+  )
+
+end
