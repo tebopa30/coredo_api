@@ -3,10 +3,11 @@ class QuestionsController < ApplicationController
   before_action :load_session!, only: [:ai_answer, :answer]
 
   def start
-    # 新規作成時は明示的に空の配列とハッシュで作成
+    mode = params[:mode] || "meal"
+  
     session = Session.create!(messages: [], state: {})
     service = OpenaiChatService.new(session)
-    payload = service.start_conversation
+    payload = service.start_conversation(mode: mode)
   
     render json: payload.merge(session_id: session.uuid)
   end
@@ -34,7 +35,6 @@ class QuestionsController < ApplicationController
     
     @session = Session.find_by!(uuid: uuid)
     
-    # ★重要: ここでデータがリセットされていないかモデルを確認してください
     @session.ensure_state!
     @session.ensure_messages!
   end

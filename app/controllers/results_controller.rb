@@ -1,18 +1,14 @@
 class ResultsController < ApplicationController
   def show
-    session_id = params[:session_id]
-    last = Answer.where(session_id:).order(:created_at).last
+    session = Session.find_by!(uuid: params[:session_id])
 
-    if last&.option&.dish_id
-      dish = Dish.find(last.option.dish_id)
+    # 最後の assistant メッセージを取得
+    last_ai = session.messages.reverse.find { |m| m["role"] == "assistant" }
 
-      render json: {
-        result: {
-          dish: dish.name,
-          description: dish.description || "説明は後ほど追加予定です",
-          image_url: dish.image_url
-        }
-      }
+    parsed = JSON.parse(last_ai["content"]) rescue nil
+
+    if parsed.is_a?(Hash) && parsed["result"]
+      render json: parsed["result"]
     else
       render json: { error: "まだ結果がありません" }, status: :not_found
     end

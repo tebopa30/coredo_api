@@ -1,7 +1,7 @@
 Rails.application.routes.draw do
   scope :api, defaults: { format: :json } do
     # 質問系
-    get  'questions/start',       to: 'questions#start'
+    post 'questions/start',       to: 'questions#start'   # ← GET → POST に修正
     get  'questions/:id',         to: 'questions#show'
     post 'questions/ai_answer',   to: 'questions#ai_answer'
     post 'questions/answer',      to: 'questions#answer'

@@ -2,9 +2,10 @@ class AnswersController < ApplicationController
   before_action :load_session!
 
   def create
-    answer  = params.require(:answer)
+    selected = params[:option_id] || params.dig(:answer, :option_id)
+  
     service = OpenaiChatService.new(@session)
-    payload = service.reply_to(answer)
+    payload = service.reply_to(selected)
     render json: payload
   end
 
