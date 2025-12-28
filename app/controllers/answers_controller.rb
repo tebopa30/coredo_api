@@ -3,6 +3,8 @@ class AnswersController < ApplicationController
 
   def create
     selected = params[:option_id] || params.dig(:answer, :option_id)
+    raise ActionController::ParameterMissing, "option_id" if selected.blank?
+  
     service = OpenaiChatService.new(@session)
     payload = service.reply_to(selected)
     render json: payload

@@ -7,8 +7,9 @@ class ResultsController < ApplicationController
 
     parsed = JSON.parse(last_ai["content"]) rescue nil
 
-    if parsed.is_a?(Hash) && parsed["result"]
-      render json: parsed["result"]
+    # 統一フォーマット（title / description / extra）に対応
+    if parsed.is_a?(Hash) && parsed["title"] && parsed["description"]
+      render json: parsed
     else
       render json: { error: "まだ結果がありません" }, status: :not_found
     end

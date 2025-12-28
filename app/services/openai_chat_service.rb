@@ -42,6 +42,7 @@ class OpenaiChatService
     when "meal"   then reply_meal(question, force_finish: force_finish)
     when "travel" then reply_travel(question, force_finish: force_finish)
     when "play"   then reply_play(question, force_finish: force_finish)
+    when "gift"   then reply_gift(question, force_finish: force_finish) 
     else
       { "error" => "Unknown mode: #{mode}" }
     end
@@ -144,6 +145,39 @@ class OpenaiChatService
     end
   end
 
+  def reply_gift(selected, force_finish: false)
+    case @state["phase"]
+    when "fixed" then handle_gift_fixed(selected)
+    else handle_ai_phase(selected, force_finish: force_finish)
+    end
+  end
+  
+    # ---------- プレゼント ----------
+  def handle_gift_fixed(selected)
+    last_q = last_question_text
+  
+    if last_q.include?("誰に")
+      @state["answers"]["target"] = selected
+  
+      next_q = {
+        "question" => "予算はどれくらい？",
+        "options"  => ["〜3000円", "〜5000円", "〜10000円", "それ以上"]
+      }
+  
+      push_messages(selected, next_q)
+      return { "next_questions" => [next_q] }
+  
+    elsif last_q.include?("予算")
+      @state["answers"]["budget"] = selected
+      @state["phase"] = "ai"
+  
+      selected_text = selected.is_a?(Hash) ? selected["option_id"] : selected
+      @messages << { role: "user", content: selected_text }
+  
+      return handle_ai_phase(selected, force_finish: false)
+    end
+  end
+
   # ============================================================
   #  AIフェーズ（Q3〜最終提案）
   # ============================================================
@@ -160,16 +194,18 @@ class OpenaiChatService
     if must_finish
       ai_payload = call_ai(messages_for_finish(@messages))
       parsed = safe_parse_json(ai_payload)
-      raw_result = parsed&.dig("result")
-
-      unless raw_result.is_a?(Hash)
+    
+      # 統一フォーマットに対応
+      raw_result = parsed
+    
+      unless raw_result.is_a?(Hash) && raw_result["title"] && raw_result["description"]
         @state["finished"] = true
         finalize_session!
         return { "error" => "AIが最終提案を返しませんでした" }
       end
-
+    
       normalized = normalize_result(raw_result, @state["mode"])
-
+    
       @messages << { role: "assistant", content: normalized.to_json }
       @state["finished"] = true
       finalize_session!
@@ -209,6 +245,7 @@ class OpenaiChatService
       when "meal"   then prompt_meal_next
       when "travel" then prompt_travel_next
       when "play"   then prompt_play_next
+      when "gift"   then prompt_gift_next
       end
 
     [{ role: "system", content: system_prompt }] + messages
@@ -222,6 +259,7 @@ class OpenaiChatService
       when "meal"   then prompt_meal_finish
       when "travel" then prompt_travel_finish
       when "play"   then prompt_play_finish
+      when "gift"   then prompt_gift_finish
       end
 
     [{ role: "system", content: system_prompt }] + messages
@@ -265,14 +303,28 @@ class OpenaiChatService
 
       制約:
       - 出力は必ず JSON
-      - dish, subtype, description を含む
+      - title と description を必ず含める
+      - title は具体的な料理名（例: カレーライス、寿司、麻婆豆腐）
       - description は優しいタメ口で短く
-      - 「ジャンル名だけ」「食材名だけ」など抽象的な回答はNG
-      （例: 和食 → NG、親子丼 → OK）
-      - 具体的な料理名を返す（例: カレーライス、寿司、麻婆豆腐、パスタ）
+      - 抽象的な回答（和食、肉料理など）はNG
+    最終回答は必ず次の JSON 形式で返してください：
 
-      出力形式:
-      { "result": { "dish": "料理名", "subtype": "サブタイプ", "description": "説明" } }
+    {
+      "title": "ユーザーに提案する名前（料理名・旅行先・遊び・プレゼントなど）",
+      "description": "提案の説明文。理由や魅力を簡潔に書く。",
+      "extra": {
+        "mode": "meal",
+        "raw": {
+          ... モード固有の追加情報を自由に入れてよい ...
+        }
+      }
+    }
+
+    重要：
+    - title は必ず1行でわかりやすい名前にする
+    - description は自然な文章にする
+    - extra.raw のキーは自由だが、title と description は必須
+    - JSON 以外の文章は書かない
     PROMPT
   end
 
@@ -295,28 +347,41 @@ class OpenaiChatService
     PROMPT
   end
 
-def prompt_travel_finish
-  a = @state["answers"]
-  <<~PROMPT
-    目的: 旅行先の最終提案を1つ返す。
-
-    これまでの選択:
-    - タイプ: #{a["travel_type"]}
-    - 目的: #{a["purpose"]}
-
-    制約:
-    - 出力は必ず JSON
-    - dish → spot_name（具体的な観光スポット名）に読み替える
-    - subtype → area（そのスポットがある地域名）
-    - description はタメ口で短く
-    - 「県名だけ」「市名だけ」など広すぎる場所はNG
-    - 必ず「具体的な観光スポット名」を返す（例: 清水寺、兼六園、首里城、美ら海水族館）
-    - スポットは「観光地」「名所」「ランドマーク」「テーマパーク」「寺社仏閣」など具体的な場所に限定する
-
-    出力形式:
-    { "result": { "dish": "スポット名", "subtype": "地域名", "description": "説明" } }
-  PROMPT
-end
+  def prompt_travel_finish
+    a = @state["answers"]
+    <<~PROMPT
+      目的: 旅行先の最終提案を1つ返す。
+  
+      これまでの選択:
+      - タイプ: #{a["travel_type"]}
+      - 目的: #{a["purpose"]}
+  
+      制約:
+      - 出力は必ず JSON
+      - title は「具体的な観光スポット名」（例: 清水寺、兼六園、美ら海水族館）
+      - description は優しいタメ口で短く
+      - 「県名だけ」「市名だけ」など広すぎる場所はNG
+      - extra.raw にはスポット名や地域名など自由に入れてよい
+  
+      最終回答は必ず次の JSON 形式で返してください：
+  
+      {
+        "title": "ユーザーに提案する名前（旅行先のスポット名）",
+        "description": "提案の説明文。理由や魅力を簡潔に書く。",
+        "extra": {
+          "mode": "travel",
+          "raw": {
+            ... モード固有の追加情報を自由に入れてよい ...
+          }
+        }
+      }
+  
+      重要：
+      - title は必ず1行でわかりやすい名前にする
+      - description は自然な文章にする
+      - JSON 以外の文章は書かない
+    PROMPT
+  end
 
   # ---------- play ----------
   def prompt_play_next
@@ -341,21 +406,90 @@ end
     a = @state["answers"]
     <<~PROMPT
       目的: 遊びの最終提案を1つ返す。
-
+  
       これまでの選択:
       - 遊びタイプ: #{a["play_type"]}
       - 屋内外: #{a["place"]}
-
+  
       制約:
-      - JSON形式
-      - dish → activity に読み替える
-      - subtype → style
-      - description はタメ口で短く
-      - 「抽象的すぎる案」はNG（例: 遊園地 → OK、外で遊ぶ → NG）
-      - 具体的な遊び案を返す（例: ハイキング、ボウリング、カラオケ、陶芸体験）
+      - 出力は必ず JSON
+      - title は「具体的な遊び案」（例: ハイキング、陶芸体験、ボウリング）
+      - description は優しいタメ口で短く
+      - 抽象的すぎる案（例: 外で遊ぶ）はNG
+      - extra.raw には遊びの種類やスタイルなど自由に入れてよい
+  
+      最終回答は必ず次の JSON 形式で返してください：
+  
+      {
+        "title": "ユーザーに提案する名前（遊び案）",
+        "description": "提案の説明文。理由や魅力を簡潔に書く。",
+        "extra": {
+          "mode": "play",
+          "raw": {
+            ... モード固有の追加情報を自由に入れてよい ...
+          }
+        }
+      }
+  
+      重要：
+      - title は必ず1行でわかりやすい名前にする
+      - description は自然な文章にする
+      - JSON 以外の文章は書かない
+    PROMPT
+  end
 
-      出力形式:
-      { "result": { "dish": "遊び案", "subtype": "スタイル", "description": "説明" } }
+  # ---------- gift ----------
+  def prompt_gift_next
+    a = @state["answers"]
+    <<~PROMPT
+      あなたは優しい20代女性の友達として、タメ口で柔らかく話す。
+  
+      目的: プレゼントの好みを聞きながら、次の質問を1つだけ返す。
+  
+      これまでの選択:
+      - 相手: #{a["target"]}
+      - 予算: #{a["budget"]}
+  
+      制約:
+      - JSON配列
+      - 質問は1つ
+      - optionsは3つ以上
+    PROMPT
+  end
+
+  def prompt_gift_finish
+    a = @state["answers"]
+    <<~PROMPT
+      目的: プレゼントの最終提案を1つ返す。
+  
+      これまでの選択:
+      - 相手: #{a["target"]}
+      - 予算: #{a["budget"]}
+  
+      制約:
+      - 出力は必ず JSON
+      - title は「具体的なプレゼント名」（例: シルバーのネックレス、ハンドクリーム）
+      - description は優しいタメ口で短く
+      - 抽象的すぎる案（例: アクセサリー）はNG
+      - extra.raw にはカテゴリや詳細など自由に入れてよい
+  
+      最終回答は必ず次の JSON 形式で返してください：
+  
+      {
+        "title": "ユーザーに提案する名前（プレゼント名）",
+        "description": "提案の説明文。理由や魅力を簡潔に書く。",
+        "extra": {
+          "mode": "gift",
+          "raw": {
+            ... モード固有の追加情報を自由に入れてよい ...
+          }
+        }
+      }
+  
+      重要：
+      - title は必ず1行でわかりやすい名前にする
+      - description は自然な文章にする
+      - JSON 以外の文章は書かない
     PROMPT
   end
 
@@ -374,6 +508,9 @@ end
     when "play"
       { "question" => "どんな遊びがしたい気分？",
         "options"  => ["屋内でまったり", "外でアクティブ", "友達とワイワイ", "一人で楽しむ"] }
+    when "gift"
+      { "question" => "誰にプレゼントしたい？",
+        "options"  => ["恋人", "友達", "家族", "自分", "その他"] }
     end
   end
 
@@ -447,27 +584,17 @@ end
   def handle_finished_session
     last_ai = @messages.reverse.find { |m| (m[:role] || m["role"]) == "assistant" }
     parsed = safe_parse_json(last_ai&.dig(:content))
-    if parsed&.dig("result")
-      { "result" => parsed["result"] }
+  
+    if parsed && parsed["title"] && parsed["description"]
+      { "result" => parsed }
     else
       { "error" => "このセッションはすでに終了しています" }
     end
   end
 
   def normalize_result(raw, mode)
-    title =
-      raw["dish"] ||
-      raw["destination"] ||
-      raw["activity"] ||
-      raw["place"] ||
-      raw["name"] ||
-      "おすすめが見つかったよ！"
-  
-    description =
-      raw["description"] ||
-      raw["reason"] ||
-      raw["detail"] ||
-      "詳しい説明は後ほど追加予定です"
+    title = raw["title"] || "おすすめが見つかったよ！"
+    description = raw["description"] || "詳しい説明は後ほど追加予定です"
   
     {
       "title" => title,

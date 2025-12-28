@@ -14,13 +14,12 @@ class QuestionsController < ApplicationController
 
   # answerアクションに統一（ai_answerもこちらへルーティングするか、aliasにする）
   def answer
-    # フロントエンドから送られるキーが 'question' のままであればそのままでOK
-    # ※実態は「ユーザーの選択」なので変数名は user_selection としました
-    user_selection = params.require(:question)
-    
+    user_selection = params[:option_id] || params[:question]
+    raise ActionController::ParameterMissing, "option_id" unless user_selection
+  
     service = OpenaiChatService.new(@session)
     payload = service.reply_to(user_selection)
-    
+  
     render json: payload
   end
   
