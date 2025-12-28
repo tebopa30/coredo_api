@@ -3,30 +3,9 @@ class AnswersController < ApplicationController
 
   def create
     selected = params[:option_id] || params.dig(:answer, :option_id)
-  
     service = OpenaiChatService.new(@session)
     payload = service.reply_to(selected)
     render json: payload
-  end
-
-  def finish
-    dish = params[:question].to_s
-  
-    # 抽象ワードはスキップ
-    if dish.match?(/感じ|気分|もの/)
-      Rails.logger.info("[FINISH SKIP] dish=#{dish.inspect}")
-      render json: { status: "skipped", session_id: params[:session_id] }
-      return
-    end
-  
-    result_hash = {
-      "session_id" => params[:session_id],
-      "dish"       => dish,
-      "subtype"    => params[:subtype],
-      "description"=> params[:description]
-    }
-  
-    render json: { status: "accepted", session_id: result_hash["session_id"] }
   end
 
   private

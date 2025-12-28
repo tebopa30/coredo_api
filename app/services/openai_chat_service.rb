@@ -62,7 +62,7 @@ class OpenaiChatService
   def handle_meal_fixed(selected)
     last_q = last_question_text
 
-    if last_q.include?("どんな系")
+    if last_q.include?("何系")
       @state["answers"]["genre"] = selected
 
       next_q = {
@@ -160,18 +160,20 @@ class OpenaiChatService
     if must_finish
       ai_payload = call_ai(messages_for_finish(@messages))
       parsed = safe_parse_json(ai_payload)
-      result = parsed&.dig("result")
+      raw_result = parsed&.dig("result")
 
-      unless result.is_a?(Hash)
+      unless raw_result.is_a?(Hash)
         @state["finished"] = true
         finalize_session!
         return { "error" => "AIが最終提案を返しませんでした" }
       end
 
-      @messages << { role: "assistant", content: result.to_json }
+      normalized = normalize_result(raw_result, @state["mode"])
+
+      @messages << { role: "assistant", content: normalized.to_json }
       @state["finished"] = true
       finalize_session!
-      return { "result" => result }
+      return { "result" => normalized }
     end
 
     # 継続質問
@@ -265,6 +267,9 @@ class OpenaiChatService
       - 出力は必ず JSON
       - dish, subtype, description を含む
       - description は優しいタメ口で短く
+      - 「ジャンル名だけ」「食材名だけ」など抽象的な回答はNG
+      （例: 和食 → NG、親子丼 → OK）
+      - 具体的な料理名を返す（例: カレーライス、寿司、麻婆豆腐、パスタ）
 
       出力形式:
       { "result": { "dish": "料理名", "subtype": "サブタイプ", "description": "説明" } }
@@ -290,25 +295,28 @@ class OpenaiChatService
     PROMPT
   end
 
-  def prompt_travel_finish
-    a = @state["answers"]
-    <<~PROMPT
-      目的: 旅行先の最終提案を1つ返す。
+def prompt_travel_finish
+  a = @state["answers"]
+  <<~PROMPT
+    目的: 旅行先の最終提案を1つ返す。
 
-      これまでの選択:
-      - タイプ: #{a["travel_type"]}
-      - 目的: #{a["purpose"]}
+    これまでの選択:
+    - タイプ: #{a["travel_type"]}
+    - 目的: #{a["purpose"]}
 
-      制約:
-      - JSON形式
-      - dish → destination に読み替える
-      - subtype → style
-      - description はタメ口で短く
+    制約:
+    - 出力は必ず JSON
+    - dish → spot_name（具体的な観光スポット名）に読み替える
+    - subtype → area（そのスポットがある地域名）
+    - description はタメ口で短く
+    - 「県名だけ」「市名だけ」など広すぎる場所はNG
+    - 必ず「具体的な観光スポット名」を返す（例: 清水寺、兼六園、首里城、美ら海水族館）
+    - スポットは「観光地」「名所」「ランドマーク」「テーマパーク」「寺社仏閣」など具体的な場所に限定する
 
-      出力形式:
-      { "result": { "dish": "旅行先", "subtype": "スタイル", "description": "説明" } }
-    PROMPT
-  end
+    出力形式:
+    { "result": { "dish": "スポット名", "subtype": "地域名", "description": "説明" } }
+  PROMPT
+end
 
   # ---------- play ----------
   def prompt_play_next
@@ -343,6 +351,8 @@ class OpenaiChatService
       - dish → activity に読み替える
       - subtype → style
       - description はタメ口で短く
+      - 「抽象的すぎる案」はNG（例: 遊園地 → OK、外で遊ぶ → NG）
+      - 具体的な遊び案を返す（例: ハイキング、ボウリング、カラオケ、陶芸体験）
 
       出力形式:
       { "result": { "dish": "遊び案", "subtype": "スタイル", "description": "説明" } }
@@ -356,8 +366,8 @@ class OpenaiChatService
   def first_question_for(mode)
     case mode
     when "meal"
-      { "question" => "まずはざっくり、どんな系のごはんが食べたい？",
-        "options"  => ["和", "洋", "中", "その他"] }
+      { "question" => "まずはざっくり、何系のごはんが食べたい？",
+        "options"  => ["和食", "洋食", "中華", "その他"] }
     when "travel"
       { "question" => "どんなタイプの旅行がしたい？",
         "options"  => ["自然", "街歩き", "温泉", "アクティブ", "その他"] }
@@ -390,7 +400,7 @@ class OpenaiChatService
     response = @client.chat(
       parameters: {
         model: "gpt-4o-mini",
-        temperature: 0.3,
+        temperature: 0.5,
         messages: messages
       }
     )
@@ -443,4 +453,30 @@ class OpenaiChatService
       { "error" => "このセッションはすでに終了しています" }
     end
   end
+
+  def normalize_result(raw, mode)
+    title =
+      raw["dish"] ||
+      raw["destination"] ||
+      raw["activity"] ||
+      raw["place"] ||
+      raw["name"] ||
+      "おすすめが見つかったよ！"
+  
+    description =
+      raw["description"] ||
+      raw["reason"] ||
+      raw["detail"] ||
+      "詳しい説明は後ほど追加予定です"
+  
+    {
+      "title" => title,
+      "description" => description,
+      "extra" => {
+        "mode" => mode,
+        "raw" => raw
+      }
+    }
+  end
+
 end
