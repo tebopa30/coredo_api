@@ -284,7 +284,7 @@ class OpenaiChatService
       制約:
       - 出力は必ず JSON 配列形式
       - 1つの質問のみ
-      - options は3つ以上
+      - options は3つ以上4つ未満
       - 結果は出さない
 
       出力例:
@@ -310,7 +310,7 @@ class OpenaiChatService
     最終回答は必ず次の JSON 形式で返してください：
 
     {
-      "title": "ユーザーに提案する名前（料理名・旅行先・遊び・プレゼントなど）",
+      "title": "ユーザーに提案する具体的な料理名（例: カレーライス、寿司、麻婆豆腐）",
       "description": "提案の説明文。理由や魅力を簡潔に書く。",
       "extra": {
         "mode": "meal",
@@ -334,7 +334,7 @@ class OpenaiChatService
     <<~PROMPT
       あなたは優しい20代女性の友達として、タメ口で柔らかく話す。
 
-      目的: 旅行の好みを聞きながら、次の質問を1つだけ返す。
+      目的: 旅行先の好みを聞きながら、次の質問を1つだけ返す。
 
       これまでの選択:
       - タイプ: #{a["travel_type"]}
@@ -343,7 +343,8 @@ class OpenaiChatService
       制約:
       - JSON配列
       - 質問は1つ
-      - optionsは3つ以上
+      - optionsは3つ以上4つ未満
+      - 国内旅行か国外旅行かを必ず聞くこと
     PROMPT
   end
 
@@ -362,6 +363,7 @@ class OpenaiChatService
       - description は優しいタメ口で短く
       - 「県名だけ」「市名だけ」など広すぎる場所はNG
       - extra.raw にはスポット名や地域名など自由に入れてよい
+      - 国内旅行か国外旅行かを必ず考慮すること
   
       最終回答は必ず次の JSON 形式で返してください：
   
@@ -398,7 +400,8 @@ class OpenaiChatService
       制約:
       - JSON配列
       - 質問は1つ
-      - optionsは3つ以上
+      - optionsは3つ以上4つ未満
+      - 誰と遊ぶかを必ず聞くこと
     PROMPT
   end
 
@@ -417,6 +420,7 @@ class OpenaiChatService
       - description は優しいタメ口で短く
       - 抽象的すぎる案（例: 外で遊ぶ）はNG
       - extra.raw には遊びの種類やスタイルなど自由に入れてよい
+      - 誰と遊ぶかを必ず考慮すること
   
       最終回答は必ず次の JSON 形式で返してください：
   
@@ -453,7 +457,7 @@ class OpenaiChatService
       制約:
       - JSON配列
       - 質問は1つ
-      - optionsは3つ以上
+      - optionsは3つ以上4つ未満
     PROMPT
   end
 
