@@ -18,12 +18,17 @@ class OpenaiChatService
   # -------------------------
   #  Start conversation
   # -------------------------
-  def start_conversation(mode:)
+  def start_conversation(mode:, freeword: nil)
     @state["mode"] = mode
-    @state["phase"] = "fixed"
     @state["answers"] = {}
-
-    first_q = first_question_for(mode)
+    if mode == "free"
+      @state["phase"] = "ai"   # ★ fixed 質問をスキップ
+      @state["freeword"] = freeword
+      first_q = first_free_question(freeword)
+    else
+      @state["phase"] = "fixed"  # ★ 既存モードは fixed から開始
+      first_q = first_question_for(mode)
+    end
 
     @messages << { role: "assistant", content: [first_q].to_json }
     finalize_session!
@@ -42,7 +47,8 @@ class OpenaiChatService
     when "meal"   then reply_meal(question, force_finish: force_finish)
     when "travel" then reply_travel(question, force_finish: force_finish)
     when "play"   then reply_play(question, force_finish: force_finish)
-    when "gift"   then reply_gift(question, force_finish: force_finish) 
+    when "gift"   then reply_gift(question, force_finish: force_finish)
+    when "free"   then reply_free(question, force_finish: force_finish)
     else
       { "error" => "Unknown mode: #{mode}" }
     end
@@ -145,6 +151,8 @@ class OpenaiChatService
     end
   end
 
+  # ---------- プレゼント ----------
+
   def reply_gift(selected, force_finish: false)
     case @state["phase"]
     when "fixed" then handle_gift_fixed(selected)
@@ -152,7 +160,6 @@ class OpenaiChatService
     end
   end
   
-    # ---------- プレゼント ----------
   def handle_gift_fixed(selected)
     last_q = last_question_text
   
@@ -178,18 +185,28 @@ class OpenaiChatService
     end
   end
 
+  # ---------- フリー ----------
+
+  def reply_free(selected, force_finish: false)
+    handle_ai_phase(selected, force_finish: force_finish)
+  end
+
   # ============================================================
   #  AIフェーズ（Q3〜最終提案）
   # ============================================================
   def handle_ai_phase(selected, force_finish:)
     last_q = last_question_text
     selected_text = selected.is_a?(Hash) ? selected["option_id"] : selected
-    user_message = last_q ? "「#{last_q}」に対して「#{selected_text}」を選んだよ" : selected_text
+    mode = @state["mode"]
+    if mode == "free"
+      user_message = "今の質問には「#{selected_text}」って答えたよ"
+    else
+      user_message = last_q ? "「#{last_q}」に対して「#{selected_text}」を選んだよ" : selected_text
+    end
 
     @messages << { role: "user", content: user_message }
     @state["turn_count"] += 1
-
-    must_finish = force_finish || @state["turn_count"] >= 9
+    must_finish = force_finish || @state["turn_count"] >= (mode == "free" ? 7 : 9)
 
     if must_finish
       ai_payload = call_ai(messages_for_finish(@messages))
@@ -254,7 +271,7 @@ class OpenaiChatService
       }
     else
       {
-        "question" => "もう少し教えてほしいな〜",
+        "question" => "もう少し教えてほしいな",
         "options"  => ["これがいい", "まあまあかな", "ちょっと違うかも"]
       }
     end
@@ -273,6 +290,7 @@ class OpenaiChatService
       when "travel" then prompt_travel_next
       when "play"   then prompt_play_next
       when "gift"   then prompt_gift_next
+      when "free"   then prompt_free_next(@state["freeword"])
       end
 
     [{ role: "system", content: system_prompt }] + messages
@@ -287,6 +305,7 @@ class OpenaiChatService
       when "travel" then prompt_travel_finish
       when "play"   then prompt_play_finish
       when "gift"   then prompt_gift_finish
+      when "free"   then prompt_free_finish(@state["freeword"])
       end
 
     [{ role: "system", content: system_prompt }] + messages
@@ -326,6 +345,8 @@ class OpenaiChatService
   def prompt_meal_finish
     a = @state["answers"]
     <<~PROMPT
+      あなたは優しい20代女性の友達として、タメ口で柔らかく話す。
+      
       目的: 食事の最終提案を1つだけ返す。
 
       これまでの選択:
@@ -395,6 +416,8 @@ class OpenaiChatService
   def prompt_travel_finish
     a = @state["answers"]
     <<~PROMPT
+      あなたは優しい20代女性の友達として、タメ口で柔らかく話す。
+      
       目的: 旅行先の最終提案を1つ返す。
   
       これまでの選択:
@@ -462,6 +485,8 @@ class OpenaiChatService
   def prompt_play_finish
     a = @state["answers"]
     <<~PROMPT
+      あなたは優しい20代女性の友達として、タメ口で柔らかく話す。
+      
       目的: 遊びの最終提案を1つ返す。
   
       これまでの選択:
@@ -470,7 +495,7 @@ class OpenaiChatService
   
       制約:
       - 出力は必ず JSON
-      - title は「具体的な遊び案」（例: ハイキング、陶芸体験、ボウリング）
+      - title は「具体的な遊び案」（例: ハイキング、陶芸体験、ボウリング、カラオケ など）
       - 抽象的すぎる案（例: 外で遊ぶ、アクティビティ、レジャー）は禁止
       - 一般名詞だけの案（例: 散歩、買い物）はNG。必ず特徴や具体性を含めること
        （例: 「川沿いのライトアップ散歩」「アウトレットでのショッピングデート」など）
@@ -528,6 +553,8 @@ class OpenaiChatService
   def prompt_gift_finish
     a = @state["answers"]
     <<~PROMPT
+      あなたは優しい20代女性の友達として、タメ口で柔らかく話す。
+      
       目的: プレゼントの最終提案を1つ返す。
   
       これまでの選択:
@@ -566,6 +593,76 @@ class OpenaiChatService
     PROMPT
   end
 
+  # ---------- free ----------
+  def prompt_free_next(freeword)
+    <<~PROMPT
+      あなたは優しい20代女性の友達として、タメ口で柔らかく話す。
+  
+    目的: ユーザーの入力（#{freeword}）をもとに、意図を深掘りするための質問を1つだけ返す。
+
+    freeword の扱い:
+    - freeword のカテゴリ（食事 / 旅行 / 遊び / プレゼント / その他）を推測してよい
+    - freeword が表す意図（食べたい / 行きたい / やりたい / 買いたい / 癒されたい など）を推測してよい
+
+    質問のルール:
+    - 出力は必ず JSON 配列形式
+    - 質問は1つ
+    - options は3〜6個
+    - 質問は freeword を深掘りする内容にすること
+      （例: 誰と行く？ どんな雰囲気？ 予算？ 時間帯？ 場所は？ 屋内外？ 目的？）
+    - 抽象的すぎる質問は禁止（例: 他に何かある？）
+    - 場所を聞く場合は、ある程度の地方が絞れるような質問をすること、必ず具体的なスポット名を提案すること
+    - 直前の質問と似た質問は禁止
+    - 回答は毎回少し違う言い回しで自然に
+    - 同じ表現を繰り返さないこと
+
+    出力例:
+    [
+      {
+        "question": "どんな雰囲気が好き？",
+        "options": ["静かめ", "にぎやか", "おしゃれ", "カジュアル"]
+      }
+    ]
+  PROMPT
+  end
+
+  def prompt_free_finish(freeword)
+    <<~PROMPT
+      あなたは優しい20代女性の友達として、タメ口で柔らかく話す。
+  
+      目的:
+      - ユーザーの入力（#{freeword}）と、これまでの回答をもとに、
+      - 最終提案を1つだけ返す。
+  
+      制約:
+      - 出力は必ず JSON
+      - title と description を必ず含める
+      - title は「具体的な固有名詞」
+        例: 店名、スポット名、料理名、体験名、アイテム名など
+      - 抽象的なカテゴリ名は禁止
+        例: 和食、観光地、アクティビティ、雑貨、遊び
+      - 一般名詞だけの案は禁止
+        例: カレー、散歩、博物館、ネックレス
+        → 必ず特徴や固有性を含めること
+          （例: 「スパイス香るチキンカレー」「代々木公園の噴水エリア」など）
+      - description は優しいタメ口で短く
+      - extra.raw には理由や補足を自由に入れてよい
+      - JSON 以外の文章は書かない
+      - 回答は毎回少し違う言い回しで自然に
+      - 同じ表現を繰り返さないこと
+  
+      出力形式:
+      {
+        "title": "具体的な提案名",
+        "description": "提案の説明文。理由や魅力を簡潔に書く。",
+        "extra": {
+          "mode": "free",
+          "raw": { ... }
+        }
+      }
+    PROMPT
+  end
+
   # ============================================================
   #  Utility
   # ============================================================
@@ -584,6 +681,54 @@ class OpenaiChatService
     when "gift"
       { "question" => "誰にプレゼントしたい？",
         "options"  => ["恋人", "友達", "家族", "自分", "子供", "その他"] }
+    end
+  end
+
+  def first_free_question(freeword)
+    system_prompt = <<~PROMPT
+      あなたは優しい20代女性の友達として、タメ口で柔らかく話す。
+  
+      目的:
+      - ユーザーの入力（#{freeword}）をもとに、
+      - 最初の質問を1つだけ返す。
+  
+      freeword の扱い:
+      - freeword に関連する内容で質問を作成すること
+      - freeword をそのまま質問に使わないこと
+      - freeword を深掘りする質問にすること
+      - freeword のカテゴリ（食事 / 旅行 / 遊び / プレゼント / その他）を推測してよい
+      - freeword が表す意図（食べたい / 行きたい / やりたい / 買いたい / 癒されたい など）を推測してよい
+  
+      質問のルール:
+      - 出力は必ず JSON 配列形式
+      - 質問は1つ
+      - options は3〜6個
+      - freeword を深掘りする質問にすること
+        （例: 誰と行く？ どんな雰囲気？ 予算？ 時間帯？ 場所は？ 屋内外？ 目的？ 何をする？ 何を作る？）
+      - 場所を聞く場合は、関東に限らずにある程度の地方が絞れるような質問をすること、その際は必ず具体的なスポット名を提案すること
+      - 抽象的すぎる質問は禁止
+      - 回答は毎回少し違う言い回しで自然に
+      - 同じ表現を繰り返さないこと
+  
+      出力例:
+      [
+        {
+          "question": "どんな雰囲気が好き？",
+          "options": ["静かめ", "にぎやか", "おしゃれ", "カジュアル"]
+        }
+      ]
+    PROMPT
+  
+    payload = call_ai([{ role: "system", content: system_prompt }])
+    parsed = safe_parse_json(payload)
+  
+    if parsed.is_a?(Array) && parsed.first&.dig("question")
+      parsed.first
+    else
+      {
+        "question" => "#{freeword} について、もう少し教えてほしいな〜",
+        "options"  => ["詳しく話す", "別の案にする", "おまかせ", "やめる"]
+      }
     end
   end
 
